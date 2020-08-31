@@ -35,6 +35,7 @@ class RegressionTests: KituraNetTest {
             ("testBadRequestFollowingGoodRequest", testBadRequestFollowingGoodRequest),
             ("testCustomEventLoopGroup", testCustomEventLoopGroup),
             ("testFailEventLoopGroupReinitialization", testFailEventLoopGroupReinitialization),
+            ("testThat_ConnectionIsSuccessful_AfterLimitReached", testThat_ConnectionIsSuccessful_AfterLimitReached),
         ]
     }
 
@@ -189,6 +190,30 @@ class RegressionTests: KituraNetTest {
             waitForExpectations(timeout: 10)
         } catch {
             XCTFail("Couldn't start server")
+        }
+    }
+
+    func testThat_ConnectionIsSuccessful_AfterLimitReached() {
+        let maxConnections = 2
+        let customResponse: (Int, String) -> (HTTPStatusCode, String)? = { limit, client in
+            return (.badRequest, "Too many connections (more than \(limit))")
+        }
+
+        do {
+            let serverOptions = ServerOptions(connectionLimit: maxConnections, connectionResponseGenerator: customResponse)
+            let server: HTTPServer = try startServer(nil, port: 0, useSSL: false, allowPortReuse: false, serverConfig: serverOptions)
+            defer {
+                server.stop()
+            }
+            guard let serverPort = server.port else {
+                XCTFail("Server port was not initialized")
+                return
+            }
+            XCTAssertTrue(serverPort != 0, "Ephemeral server port not set")
+
+
+        } catch {
+            XCTFail(error.localizedDescription)
         }
     }
 

@@ -123,7 +123,7 @@ class KituraNetTest: XCTestCase {
         case both
     }
 
-    func performServerTest(serverConfig: ServerOptions = ServerOptions(), _ delegate: ServerDelegate?, socketType: SocketType = .both, useSSL: Bool = useSSLDefault, allowPortReuse: Bool = portReuseDefault, line: Int = #line, asyncTasks: (XCTestExpectation) -> Void...) {
+    func performServerTest(serverConfig: ServerOptions = ServerOptions(), _ delegate: ServerDelegate?, socketType: SocketType = .both, useSSL: Bool = useSSLDefault, allowPortReuse: Bool = portReuseDefault, line: Int = #line, asyncTasks: (XCTestExpectation) throws -> Void...) {
         let serverConfig = serverConfig
         self.socketType = socketType
         if socketType != .tcp {
@@ -134,7 +134,7 @@ class KituraNetTest: XCTestCase {
         }
     }
 
-    func performServerTestWithUnixSocket(serverConfig: ServerOptions = ServerOptions(), delegate: ServerDelegate?, useSSL: Bool = useSSLDefault, allowPortReuse: Bool = portReuseDefault, line: Int = #line, asyncTasks: [(XCTestExpectation) -> Void]) {
+    func performServerTestWithUnixSocket(serverConfig: ServerOptions = ServerOptions(), delegate: ServerDelegate?, useSSL: Bool = useSSLDefault, allowPortReuse: Bool = portReuseDefault, line: Int = #line, asyncTasks: [(XCTestExpectation) throws -> Void]) {
         do {
             var serverConfig = serverConfig
             var server: HTTPServer
@@ -145,16 +145,24 @@ class KituraNetTest: XCTestCase {
                 server.stop()
             }
 
+            var expectations: [XCTestExpectation] = []
+
             let requestQueue = DispatchQueue(label: "Request queue")
             for (index, asyncTask) in asyncTasks.enumerated() {
                 let expectation = self.expectation(line: line, index: index)
+                expectations.append(expectation)
+
                 requestQueue.async {
-                    asyncTask(expectation)
+                    do {
+                        try asyncTask(expectation)
+                    } catch {
+                        XCTFail(error.localizedDescription)
+                    }
                 }
             }
 
             // wait for timeout or for all created expectations to be fulfilled
-            waitExpectation(timeout: 10) { error in
+            self.wait(for: expectations, timeout: 10) { error in
                 XCTAssertNil(error)
             }
         } catch {
@@ -162,7 +170,7 @@ class KituraNetTest: XCTestCase {
         }
     }
 
-    func performServerTestWithTCPPort(serverConfig: ServerOptions = ServerOptions(), delegate: ServerDelegate?, useSSL: Bool = useSSLDefault, allowPortReuse: Bool = portReuseDefault, line: Int = #line, asyncTasks: [(XCTestExpectation) -> Void]) {
+    func performServerTestWithTCPPort(serverConfig: ServerOptions = ServerOptions(), delegate: ServerDelegate?, useSSL: Bool = useSSLDefault, allowPortReuse: Bool = portReuseDefault, line: Int = #line, asyncTasks: [(XCTestExpectation) throws -> Void]) {
         do {
             var serverConfig = serverConfig
             var server: HTTPServer
@@ -175,15 +183,22 @@ class KituraNetTest: XCTestCase {
                 server.stop()
             }
             let requestQueue = DispatchQueue(label: "Request queue")
+            var expectations: [XCTestExpectation] = []
+            
             for (index, asyncTask) in asyncTasks.enumerated() {
                 let expectation = self.expectation(line: line, index: index)
+                expectations.append(expectation)
                 requestQueue.async {
-                    asyncTask(expectation)
+                    do {
+                        try asyncTask(expectation)
+                    } catch {
+                        XCTFail(error.localizedDescription)
+                    }
                 }
             }
 
             // wait for timeout or for all created expectations to be fulfilled
-            waitExpectation(timeout: 10) { error in
+            self.wait(for: expectations, timeout: 10) { error in
                 XCTAssertNil(error)
             }
         } catch {
@@ -255,13 +270,70 @@ class KituraNetTest: XCTestCase {
         return self.expectation(description: "\(type(of: self)):\(line)[\(index)]")
     }
 
-    func waitExpectation(timeout: TimeInterval, handler: XCWaitCompletionHandler?) {
-        self.waitForExpectations(timeout: timeout, handler: handler)
-    }
 }
 
 private extension UInt16 {
     func toInt16() -> Int16 {
         return Int16(bitPattern: self)
     }
+}
+
+extension XCTestCase {
+    public enum Failures: Error {
+        case timedOut
+        case interrupted
+        case incorrectOrder
+        case invertedFulfillment
+    }
+    func wait(for expectations: [XCTestExpectation], timeout seconds: TimeInterval, handler: @escaping XCWaitCompletionHandler = { _ in }) {
+        let waiter = XCTWaiter()
+//        let helper = WaiterHelper(handler: handler)
+//        waiter.delegate = helper
+        let result = waiter.wait(for: expectations, timeout: seconds)
+        switch result {
+        case .completed: handler(nil)
+        case .incorrectOrder: handler(Failures.incorrectOrder)
+        case .interrupted: handler(Failures.interrupted)
+        case .timedOut: handler(Failures.timedOut)
+        case .invertedFulfillment: handler(Failures.invertedFulfillment)
+        }
+//        if helper.didError
+    }
+
+}
+
+public class WaiterHelper: NSObject, XCTWaiterDelegate {
+    var completionHandler: XCWaitCompletionHandler
+    var didError: Bool
+
+    public enum Failures: Error {
+        case didTimeout
+        case wasInterrupted
+        case didViolateOrderingConstraint
+        case didFullfillInvertedExpectation
+    }
+    init(handler: @escaping XCWaitCompletionHandler) {
+        self.didError = false
+        self.completionHandler = handler
+    }
+
+    public func waiter(_ waiter: XCTWaiter, didTimeoutWithUnfulfilledExpectations unfulfilledExpectations: [XCTestExpectation]) {
+        self.didError = true
+        self.completionHandler(Failures.didTimeout)
+    }
+    public func nestedWaiter(_ waiter: XCTWaiter, wasInterruptedByTimedOutWaiter outerWaiter: XCTWaiter) {
+        self.didError = true
+        self.completionHandler(Failures.wasInterrupted)
+    }
+    public func waiter(_ waiter: XCTWaiter, fulfillmentDidViolateOrderingConstraintsFor expectation: XCTestExpectation, requiredExpectation: XCTestExpectation) {
+        self.didError = true
+        self.completionHandler(Failures.didViolateOrderingConstraint)
+    }
+
+    public func waiter(_ waiter: XCTWaiter, didFulfillInvertedExpectation expectation: XCTestExpectation) {
+        self.didError = true
+        self.completionHandler(Failures.didFullfillInvertedExpectation)
+    }
+
+
 }
