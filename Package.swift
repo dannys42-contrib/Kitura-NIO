@@ -22,8 +22,8 @@ let package = Package(
     name: "Kitura-NIO",
     products: [
         .library(
-            name: "KituraNet",
-            targets: ["KituraNet"])
+            name: "KituraNIONet",
+            targets: ["KituraNIONet"])
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
@@ -38,10 +38,10 @@ let package = Package(
             name: "CLinuxHelpers",
             dependencies: []),
         .target(
-            name: "KituraNet",
+            name: "KituraNIONet",
             dependencies: ["NIO", "NIOFoundationCompat", "NIOHTTP1", "NIOSSL", "SSLService", "LoggerAPI", "NIOWebSocket", "CLinuxHelpers", "NIOConcurrencyHelpers", "NIOExtras"]),
         .testTarget(
-            name: "KituraNetTests",
-            dependencies: ["KituraNet"])
+            name: "KituraNIONetTests",
+            dependencies: ["KituraNIONet"])
     ]
 )
